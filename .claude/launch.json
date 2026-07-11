@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "static-site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "-l", "4321", "."],
+      "port": 4321
+    },
+    {
+      "name": "storybook",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "businessos-app", "run", "storybook", "--", "--ci"],
+      "port": 6006
+    }
+  ]
+}

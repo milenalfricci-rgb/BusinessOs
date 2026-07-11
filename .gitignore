@@ -1,0 +1,28 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Node / Next.js (businessos-app)
+businessos-app/node_modules/
+businessos-app/.next/
+businessos-app/out/
+businessos-app/build/
+businessos-app/coverage/
+businessos-app/.vercel
+businessos-app/*.tsbuildinfo
+businessos-app/next-env.d.ts
+businessos-app/npm-debug.log*
+businessos-app/yarn-debug.log*
+businessos-app/yarn-error.log*
+businessos-app/.pnpm-debug.log*
+businessos-app/*storybook.log
+businessos-app/storybook-static
+
+# Env files
+.env
+.env.*
+*.pem
