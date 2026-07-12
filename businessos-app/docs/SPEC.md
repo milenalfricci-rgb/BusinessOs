@@ -15,7 +15,7 @@ businessos-app/
 │   ├── BRIEFING.md
 │   ├── PRD.md
 │   └── SPEC.md
-├── content/                     # THE data — markdown + frontmatter, see §2
+├── content/                     # seed/historical data only — see §2 and §4 note
 │   ├── fundador/
 │   ├── direcao/
 │   ├── validacao/
@@ -35,9 +35,12 @@ businessos-app/
 │   └── actions/
 │       └── content.ts           # Server Actions wrapping lib/content.ts writes
 ├── lib/
-│   ├── content.ts               # content read/write API — see §4
+│   ├── content.ts               # content read/write API (Supabase-backed) — see §4
 │   ├── content.types.ts         # ContentItem / Frontmatter types — see §4
+│   ├── supabase.ts              # server-only Supabase client (service-role key)
 │   └── utils.ts                 # shadcn's cn() helper, misc utilities
+├── scripts/
+│   └── seed-supabase.ts         # one-time migration: content/**/*.md → Supabase
 ├── components/
 │   ├── ui/                      # shadcn/ui primitives (button, card, select, input, ...)
 │   ├── sidebar/
@@ -59,12 +62,11 @@ businessos-app/
 ```
 
 Notes:
-- `content/` lives at the project root (sibling to `app/`), not under
-  `public/`, since it is read/written server-side only, never served
-  statically as-is.
+- `content/` is kept as historical/seed data (source for
+  `scripts/seed-supabase.ts`) but is not read at app runtime — see §4.
 - `app/actions/content.ts` is the only place `"use server"` write functions
-  live; pages and client components call into it, never touch the
-  filesystem directly.
+  live; pages and client components call into it, never touch
+  `lib/supabase.ts` directly.
 
 ---
 
@@ -268,19 +270,24 @@ function updateContentItem(
 ```
 
 Implementation requirements (binding, not suggestions):
-- Parsing/serializing frontmatter uses `gray-matter`.
-- All three functions read/write the local filesystem directly, under
-  `content/<section>/<slug>.md`, resolved relative to the project root
-  (e.g. via `process.cwd()`), never a hardcoded absolute path.
-- `section` and `slug` together are always the on-disk address; there is
-  no separate ID field and no in-memory index/database in v1 — every call
-  hits the filesystem.
+- **Updated (post-v1): persistence is Supabase (Postgres), not the local
+  filesystem.** All three functions are `async` and query a single
+  `content_items` table (unique on `(section, slug)`) via a server-only
+  Supabase client (`lib/supabase.ts`, service-role key, never a
+  `NEXT_PUBLIC_*` var). The original `content/**/*.md` files stay in the
+  repo as historical/seed data — see `scripts/seed-supabase.ts` — but are
+  not read at runtime.
+- `section` and `slug` together are still the item's address (now as a
+  unique DB constraint instead of a file path); there is no separate
+  surfaced ID field.
 - `updateContentItem` is only ever called from a Server Action (see §4.3)
-  — never from a Client Component directly, since it performs filesystem
-  writes.
+  — never from a Client Component directly, since it holds the
+  service-role key server-side.
 - Validation errors (bad `status` enum value, missing `title`, mismatched
-  `section`/`slug` vs. path) throw; callers are expected to surface these
-  as user-facing errors, not silently swallow them.
+  `section`/`slug`) throw; callers are expected to surface these as
+  user-facing errors, not silently swallow them. The same validation
+  logic that used to check `section`/`slug` against a file path now
+  checks them against the row's own columns.
 
 ### 4.3 Server Actions (`app/actions/content.ts`)
 
@@ -455,31 +462,23 @@ Stories required for v1 (one `.stories.tsx` colocated per component):
 
 ---
 
-## 8. Agent/skill integration conventions
+## 8. Agent/skill integration conventions (retired — see below)
 
-BusinessOS deliberately has no API layer for agents in v1 — the
-integration surface *is* the filesystem:
+**Status: stale as of the Supabase migration.** This section originally
+described the filesystem (`content/**/*.md`) as the integration surface
+for AI agents/skills. That premise is retired: no agent ever actually
+used it, it was aspirational, and persistence has since moved to
+Supabase (§4). The `content/**/*.md` files still exist in the repo but
+are seed/historical data only, not a live surface — an agent reading them
+today would see stale content.
 
-- Any external AI agent or skill with filesystem access to this project
-  can read business context by reading `content/**/*.md` files directly,
-  parsing frontmatter with any standard YAML frontmatter parser (the
-  format is plain `gray-matter`-compatible frontmatter, nothing custom).
-- An agent proposing or making an update should write back to the exact
-  same file, preserving all existing frontmatter fields it isn't
-  intentionally changing, and should set `status` and `updated_at`
-  sensibly (`updated_at` to the current time; `status` left to the agent's
-  judgement — e.g. an agent finishing research might set
-  `validacao/oferta.md` to `validated`).
-- Agents should use the `related` field (§2.1, §3) the same way the app
-  does — `section/slug` strings — so links they add stay resolvable by
-  both the UI and other agents.
-- Because reads/writes go straight to disk with no locking in v1,
-  agents editing content concurrently with the founder should treat this
-  the same way two people editing a shared file would: last write wins,
-  no merge support. This is an accepted v1 limitation, not an oversight.
+A future agent integration would read/write the `content_items` Supabase
+table directly (or through a thin wrapper around `lib/content.ts`), reusing
+the same `related`/`tags`/`status`/`updated_at` conventions from §3. No
+such integration exists yet; this is future work, not a current
+capability.
 
 Reserved for later (not created in this pass): a `docs/AGENTS.md`
 convention for registering which named agents/skills are expected to
 operate on which sections/items, and what each is responsible for keeping
-up to date. This spec only reserves the name/location so a future pass has
-an obvious place to put it — no such file exists yet.
+up to date.

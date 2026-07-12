@@ -9,6 +9,6 @@ export async function saveContentItem(
   slug: string,
   data: { frontmatter?: Partial<Frontmatter>; body?: string }
 ): Promise<void> {
-  updateContentItem(section, slug, data);
+  await updateContentItem(section, slug, data);
   revalidatePath(`/${section}`);
 }

@@ -38,12 +38,12 @@ validation, cash), so that:
 ## Stack at a glance
 
 - **Next.js** (App Router, TypeScript) — the web app.
-- **Content storage: local markdown files with YAML frontmatter.** This is
-  the actual persistence layer today — there is no database. Every page's
-  sub-items are individual `.md` files under a `content/` directory.
-- **Supabase** is the intended future backend — for real persistence,
-  auth, and multi-device sync. It is noted here for the record only; the
-  current build does **not** integrate Supabase in any way.
+- **Content storage: Supabase (Postgres).** All reads and writes go
+  through `lib/content.ts`, which queries a single `content_items` table
+  server-side (via a service-role key, never exposed to the browser). The
+  original `content/**/*.md` files remain in the repo as historical/seed
+  data — see `scripts/seed-supabase.ts` — but are no longer read at
+  runtime.
 - **shadcn/ui** for UI components.
 - **Storybook** for building and documenting components in isolation.
 
@@ -57,14 +57,17 @@ the active/hovered item with a background fill.
 
 ## Non-goals for this phase
 
-- **No authentication.** Single implicit user, no login flow.
-- **No real database.** Markdown + frontmatter on the local filesystem is
-  the persistence layer; Supabase is future work only.
+- **No authentication.** Single implicit user, no login flow — Supabase
+  access is via a server-only service-role key, not user auth.
 - **No multi-user support.** No sharing, roles, or permissions.
-- **No live agent orchestration UI.** Agents/skills reading and writing
-  `content/**/*.md` is the integration point for now; a dedicated UI for
-  managing which agents run against which content is future work (see
-  PRD.md roadmap).
+- **No live agent orchestration UI, and no filesystem-based agent
+  integration surface anymore.** Earlier drafts of this doc described
+  `content/**/*.md` as the integration point for agents/skills; that
+  premise is retired now that Supabase is the live data source and no
+  agent ever actually used the filesystem surface. A future agent
+  integration would read/write Supabase directly. A dedicated UI for
+  managing which agents run against which content is still future work
+  (see PRD.md roadmap).
 
 See `PRD.md` for product requirements and `SPEC.md` for the technical
 specification that the app should be built against.

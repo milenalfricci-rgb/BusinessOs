@@ -1,6 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
-import matter from "gray-matter";
+import "server-only";
+import { supabase } from "./supabase";
 import type { ContentItem, ContentStatus, Frontmatter, Section } from "./content.types";
 
 const SECTIONS: Section[] = ["fundador", "direcao", "validacao", "caixa"];
@@ -28,18 +27,12 @@ function assertValidSection(section: Section): void {
   }
 }
 
-function contentRoot(): string {
-  return path.join(process.cwd(), "content");
-}
-
-function filePathFor(section: Section, slug: string): string {
-  return path.join(contentRoot(), section, `${slug}.md`);
-}
-
 /**
- * Validate a raw parsed frontmatter object against the schema in SPEC.md §3,
- * cross-checking `section`/`slug` against the file's actual on-disk location.
- * Throws a descriptive error on any failure.
+ * Validate a raw frontmatter-shaped object against the schema in SPEC.md §3,
+ * cross-checking `section`/`slug` against the expected on-disk-style
+ * location (`<section>/<slug>.md`, kept as a label for error messages even
+ * though there is no real file anymore). Throws a descriptive error on any
+ * failure.
  */
 function validateFrontmatter(
   raw: Record<string, unknown>,
@@ -62,7 +55,7 @@ function validateFrontmatter(
   }
   if (raw.section !== expectedSection) {
     throw new Error(
-      `Frontmatter/path mismatch in "${relativeFilePath}": frontmatter "section" is "${raw.section}" but file lives under "${expectedSection}/".`
+      `Frontmatter/path mismatch in "${relativeFilePath}": frontmatter "section" is "${raw.section}" but expected "${expectedSection}".`
     );
   }
 
@@ -73,7 +66,7 @@ function validateFrontmatter(
   }
   if (raw.slug !== expectedSlug) {
     throw new Error(
-      `Frontmatter/path mismatch in "${relativeFilePath}": frontmatter "slug" is "${raw.slug}" but filename implies "${expectedSlug}".`
+      `Frontmatter/path mismatch in "${relativeFilePath}": frontmatter "slug" is "${raw.slug}" but expected "${expectedSlug}".`
     );
   }
 
@@ -91,10 +84,6 @@ function validateFrontmatter(
     );
   }
 
-  // YAML auto-detects unquoted ISO 8601 scalars (e.g. `2026-07-11T14:30:00.000Z`)
-  // as native Date objects rather than strings. SPEC.md §3.1's own example
-  // writes `updated_at` unquoted, so normalize a parsed Date back to an ISO
-  // string instead of rejecting it.
   let updatedAt = raw.updated_at;
   if (updatedAt instanceof Date) {
     updatedAt = updatedAt.toISOString();
@@ -106,7 +95,7 @@ function validateFrontmatter(
     );
   }
 
-  if (raw.related !== undefined) {
+  if (raw.related !== undefined && raw.related !== null) {
     if (
       !Array.isArray(raw.related) ||
       !raw.related.every((entry) => typeof entry === "string")
@@ -117,7 +106,7 @@ function validateFrontmatter(
     }
   }
 
-  if (raw.tags !== undefined) {
+  if (raw.tags !== undefined && raw.tags !== null) {
     if (!Array.isArray(raw.tags) || !raw.tags.every((entry) => typeof entry === "string")) {
       throw new Error(
         `Invalid frontmatter in "${relativeFilePath}": "tags" must be an array of strings when present.`
@@ -132,78 +121,110 @@ function validateFrontmatter(
     summary: raw.summary,
     status: raw.status as ContentStatus,
     updated_at: updatedAt,
-    related: raw.related as string[] | undefined,
-    tags: raw.tags as string[] | undefined,
+    related: (raw.related ?? undefined) as string[] | undefined,
+    tags: (raw.tags ?? undefined) as string[] | undefined,
   };
 }
 
-function readContentItem(section: Section, slug: string): ContentItem {
-  const absPath = filePathFor(section, slug);
-  const relativeFilePath = path.join(section, `${slug}.md`).replace(/\\/g, "/");
+interface ContentItemRow {
+  section: string;
+  slug: string;
+  title: string;
+  summary: string;
+  status: string;
+  updated_at: string;
+  related: string[] | null;
+  tags: string[] | null;
+  body: string;
+}
 
-  if (!fs.existsSync(absPath)) {
-    throw new Error(
-      `Content file not found: "content/${relativeFilePath}" (section="${section}", slug="${slug}").`
-    );
-  }
-
-  const raw = fs.readFileSync(absPath, "utf-8");
-  const parsed = matter(raw);
+function rowToContentItem(row: ContentItemRow): ContentItem {
+  const relativeFilePath = `${row.section}/${row.slug}.md`;
   const frontmatter = validateFrontmatter(
-    parsed.data as Record<string, unknown>,
-    section,
-    slug,
+    row as unknown as Record<string, unknown>,
+    row.section as Section,
+    row.slug,
     relativeFilePath
   );
-
   return {
     frontmatter,
-    body: parsed.content.replace(/^\n+/, "").replace(/\s+$/, "\n"),
+    body: row.body,
     filePath: relativeFilePath,
   };
 }
 
 // Read every item in a section, in the fixed display order defined for
 // that section (see PRD.md §4.2 / SPEC.md §2 for the canonical order).
-// Throws if the section itself is invalid; returns [] only if the section
-// folder exists but is empty (should not happen given the fixed item set).
-export function listSection(section: Section): ContentItem[] {
+// Throws if the section itself is invalid, or if an expected item is
+// missing from the database.
+export async function listSection(section: Section): Promise<ContentItem[]> {
   assertValidSection(section);
 
   const slugs = SECTION_ITEMS[section];
-  const sectionDir = path.join(contentRoot(), section);
 
-  if (!fs.existsSync(sectionDir)) {
-    return [];
+  const { data, error } = await supabase
+    .from("content_items")
+    .select("*")
+    .eq("section", section)
+    .in("slug", slugs);
+
+  if (error) {
+    throw new Error(`Failed to list section "${section}": ${error.message}`);
   }
 
-  return slugs.map((slug) => readContentItem(section, slug));
+  const bySlug = new Map((data as ContentItemRow[]).map((row) => [row.slug, row]));
+
+  return slugs.map((slug) => {
+    const row = bySlug.get(slug);
+    if (!row) {
+      throw new Error(
+        `Content item not found: "${section}/${slug}" (expected by SECTION_ITEMS but missing from content_items table).`
+      );
+    }
+    return rowToContentItem(row);
+  });
 }
 
-// Read a single item. Throws a descriptive error if the file does not
-// exist or fails frontmatter validation (missing required field, wrong
-// `section`/`slug` value vs. the file's actual location, etc).
-export function getContentItem(section: Section, slug: string): ContentItem {
+// Read a single item. Throws a descriptive error if the row does not exist
+// or fails frontmatter validation.
+export async function getContentItem(section: Section, slug: string): Promise<ContentItem> {
   assertValidSection(section);
-  return readContentItem(section, slug);
+
+  const { data, error } = await supabase
+    .from("content_items")
+    .select("*")
+    .eq("section", section)
+    .eq("slug", slug)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get content item "${section}/${slug}": ${error.message}`);
+  }
+  if (!data) {
+    throw new Error(
+      `Content item not found: "${section}/${slug}" (section="${section}", slug="${slug}").`
+    );
+  }
+
+  return rowToContentItem(data as ContentItemRow);
 }
 
 // Partial update: merge `data.frontmatter` into the existing frontmatter
 // (shallow merge — arrays like `related`/`tags` are replaced wholesale,
-// not merged element-by-element), replace `body` if provided, and
-// ALWAYS overwrite `updated_at` to the current time on any call,
-// regardless of whether frontmatter was passed. Writes the file back to
-// disk atomically (write to a temp file, then rename) using `gray-matter`
-// to re-serialize. Returns nothing; callers re-fetch via
-// getContentItem/listSection to get the fresh state.
-export function updateContentItem(
+// not merged element-by-element), replace `body` if provided, and ALWAYS
+// overwrite `updated_at` to the current time on any call, regardless of
+// whether frontmatter was passed. Updates the row in Supabase (a single
+// `UPDATE` is already atomic — no temp-file dance needed). Returns
+// nothing; callers re-fetch via getContentItem/listSection to get the
+// fresh state.
+export async function updateContentItem(
   section: Section,
   slug: string,
   data: { frontmatter?: Partial<Frontmatter>; body?: string }
-): void {
+): Promise<void> {
   assertValidSection(section);
 
-  const existing = readContentItem(section, slug);
+  const existing = await getContentItem(section, slug);
 
   const mergedFrontmatter: Frontmatter = {
     ...existing.frontmatter,
@@ -211,7 +232,7 @@ export function updateContentItem(
     updated_at: new Date().toISOString(),
   };
 
-  const relativeFilePath = path.join(section, `${slug}.md`).replace(/\\/g, "/");
+  const relativeFilePath = `${section}/${slug}.md`;
   // Re-validate the merged result so a bad partial update (e.g. an invalid
   // status enum value) fails loudly instead of writing corrupt content.
   validateFrontmatter(
@@ -223,14 +244,21 @@ export function updateContentItem(
 
   const nextBody = data.body !== undefined ? data.body : existing.body;
 
-  const fileContents = matter.stringify(nextBody, mergedFrontmatter);
+  const { error } = await supabase
+    .from("content_items")
+    .update({
+      title: mergedFrontmatter.title,
+      summary: mergedFrontmatter.summary,
+      status: mergedFrontmatter.status,
+      updated_at: mergedFrontmatter.updated_at,
+      related: mergedFrontmatter.related ?? null,
+      tags: mergedFrontmatter.tags ?? null,
+      body: nextBody,
+    })
+    .eq("section", section)
+    .eq("slug", slug);
 
-  const absPath = filePathFor(section, slug);
-  const tmpPath = path.join(
-    path.dirname(absPath),
-    `.${slug}.md.${process.pid}.${Date.now()}.tmp`
-  );
-
-  fs.writeFileSync(tmpPath, fileContents, "utf-8");
-  fs.renameSync(tmpPath, absPath);
+  if (error) {
+    throw new Error(`Failed to update content item "${section}/${slug}": ${error.message}`);
+  }
 }
