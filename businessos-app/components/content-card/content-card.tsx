@@ -77,6 +77,19 @@ function formatUpdatedAt(iso: string): string {
   });
 }
 
+// tags/related are edited as a single comma-separated text field; these
+// convert between that and the string[] shape stored in frontmatter.
+function formatListField(values: string[] | undefined): string {
+  return (values ?? []).join(", ");
+}
+
+function parseListField(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 /**
  * Renders a single ContentItem as either a grid tile or a full-width list
  * row (SPEC.md §6.5). Both modes read the same `item` prop — no separate
@@ -168,6 +181,12 @@ function ContentCardEditDialog({
   const [status, setStatus] = React.useState<ContentStatus>(
     item.frontmatter.status
   );
+  const [tags, setTags] = React.useState(
+    formatListField(item.frontmatter.tags)
+  );
+  const [related, setRelated] = React.useState(
+    formatListField(item.frontmatter.related)
+  );
   const [body, setBody] = React.useState(item.body);
   const [isPending, startTransition] = React.useTransition();
 
@@ -179,6 +198,8 @@ function ContentCardEditDialog({
       setTitle(item.frontmatter.title);
       setSummary(item.frontmatter.summary);
       setStatus(item.frontmatter.status);
+      setTags(formatListField(item.frontmatter.tags));
+      setRelated(formatListField(item.frontmatter.related));
       setBody(item.body);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,7 +208,13 @@ function ContentCardEditDialog({
   function handleSave() {
     startTransition(async () => {
       await saveContentItem(item.frontmatter.section, item.frontmatter.slug, {
-        frontmatter: { title, summary, status },
+        frontmatter: {
+          title,
+          summary,
+          status,
+          tags: parseListField(tags),
+          related: parseListField(related),
+        },
         body,
       });
       onOpenChange(false);
@@ -243,6 +270,28 @@ function ContentCardEditDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${idPrefix}-tags`}>Tags</Label>
+            <Input
+              id={`${idPrefix}-tags`}
+              value={tags}
+              onChange={(event) => setTags(event.target.value)}
+              placeholder="comma-separated, e.g. pricing, growth"
+              disabled={isPending}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${idPrefix}-related`}>Related</Label>
+            <Input
+              id={`${idPrefix}-related`}
+              value={related}
+              onChange={(event) => setRelated(event.target.value)}
+              placeholder="comma-separated section/slug, e.g. direcao/oferta"
+              disabled={isPending}
+            />
           </div>
 
           <div className="flex flex-col gap-1.5">

@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "businessos-app", "run", "storybook", "--", "--ci"],
       "port": 6006
+    },
+    {
+      "name": "businessos-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "businessos-app", "run", "dev"],
+      "port": 3000
     }
   ]
 }
